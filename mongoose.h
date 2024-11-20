@@ -1115,8 +1115,6 @@ bool mg_path_is_sane(const struct mg_str path);
 
 #define MG_IPV4(a, b, c, d) mg_htonl(MG_U32(a, b, c, d))
 
-#define MG_IPV4(a, b, c, d) mg_htonl(MG_U32(a, b, c, d))
-
 // For printing IPv4 addresses: printf("%d.%d.%d.%d\n", MG_IPADDR_PARTS(&ip))
 #define MG_U8P(ADDR) ((uint8_t *) (ADDR))
 #define MG_IPADDR_PARTS(ADDR) \
@@ -2875,15 +2873,6 @@ struct mg_profitem {
 #include "Driver_ETH_MAC.h"  // keep this include
 #include "Driver_ETH_PHY.h"  // keep this include
 
-#ifndef MG_MAC_ADDRESS
-#define MG_MAC_ADDRESS MG_MAC_ADDRESS_RANDOM
-#endif
-
-#define MG_TCPIP_DRIVER_DATA int driver_data;
-
-#define MG_TCPIP_DRIVER_CODE &mg_tcpip_driver_cmsis
-#define MG_TCPIP_DRIVER_NAME "cmsis"
-
 #endif
 
 
@@ -2942,10 +2931,10 @@ struct mg_phy {
 
 // PHY configuration settings, bitmask
 enum {
-  MG_PHY_LEDS_ACTIVE_HIGH =
-      (1 << 0),  // Set if PHY LEDs are connected to ground
-  MG_PHY_CLOCKS_MAC =
-      (1 << 1)   // Set when PHY clocks MAC. Otherwise, MAC clocks PHY
+  // Set if PHY LEDs are connected to ground
+  MG_PHY_LEDS_ACTIVE_HIGH = (1 << 0),
+  // Set when PHY clocks MAC. Otherwise, MAC clocks PHY
+  MG_PHY_CLOCKS_MAC = (1 << 1),
 };
 
 enum { MG_PHY_SPEED_10M, MG_PHY_SPEED_100M, MG_PHY_SPEED_1000M };
@@ -3055,17 +3044,10 @@ struct mg_tcpip_driver_stm32h_data {
   uint8_t phy_conf;  // PHY config
 };
 
-<<<<<<< HEAD
-<<<<<<< HEAD
 #ifndef MG_TCPIP_PHY_CONF
 #define MG_TCPIP_PHY_CONF MG_PHY_CLOCKS_MAC
 #endif
 
-=======
-<<<<<<< HEAD
->>>>>>> 60cce282 (Add driver init to mg_mgr_init())
-=======
->>>>>>> f74ae90c (update version)
 #ifndef MG_TCPIP_PHY_ADDR
 #define MG_TCPIP_PHY_ADDR 0
 #endif
@@ -3114,8 +3096,6 @@ struct mg_tcpip_driver_tm4c_data {
 #define MG_DRIVER_MDC_CR 1
 #endif
 
-<<<<<<< HEAD
-<<<<<<< HEAD
 #define MG_TCPIP_DRIVER_INIT(mgr)                               \
   do {                                                          \
     static struct mg_tcpip_driver_tm4c_data driver_data_;       \
@@ -3131,22 +3111,6 @@ struct mg_tcpip_driver_tm4c_data {
     MG_INFO(("Driver: tm4c, MAC: %M", mg_print_mac, mif_.mac)); \
   } while (0)
 
-=======
-<<<<<<< HEAD
-=======
-#define MG_TCPIP_DRIVER_DATA                                \
-  static struct mg_tcpip_driver_tm4c_data driver_data = { \
-      .mdc_cr = MG_DRIVER_MDC_CR,                            \
-  };
-
-#define MG_TCPIP_DRIVER_CODE &mg_tcpip_driver_tm4c
-#define MG_TCPIP_DRIVER_NAME "tm4c"
-
-
->>>>>>> a0834330 (Add driver init to mg_mgr_init())
->>>>>>> 60cce282 (Add driver init to mg_mgr_init())
-=======
->>>>>>> f74ae90c (update version)
 #endif
 
 
