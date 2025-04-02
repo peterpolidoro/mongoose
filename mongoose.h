@@ -900,6 +900,19 @@ struct timeval {
 #define MG_ENABLE_TCPIP_PRINT_DEBUG_STATS 0
 #endif
 
+#ifndef MG_MDNS
+#define MG_MDNS 0
+#endif
+
+#if MG_ENABLE_TCPIP
+#if MG_MDNS
+#undef MG_TCPIP_MCAST
+#define MG_TCPIP_MCAST 1
+#elif !defined(MG_TCPIP_MCAST)
+#define MG_TCPIP_MCAST 0
+#endif
+#endif
+
 
 
 
@@ -2781,6 +2794,8 @@ bool mg_wifi_ap_start(char *ssid, char *pass, unsigned int channel);
 bool mg_wifi_ap_stop(void);
 
 
+#if MG_ENABLE_TCPIP
+
 
 
 
@@ -2879,6 +2894,10 @@ struct mg_tcpip_spi {
   void (*end)(void *);              // SPI end: slave select high
   uint8_t (*txn)(void *, uint8_t);  // SPI transaction: write 1 byte, read reply
 };
+
+#define mg_mcast_add(ip, fd)
+
+#endif
 
 
 

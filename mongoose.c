@@ -398,6 +398,60 @@ void mg_resolve(struct mg_connection *c, const char *url) {
   }
 }
 
+#if MG_MDNS
+static const uint8_t mdns_answer[] = {
+  0xc0, 0x0c,          // Point to the name in the DNS question
+  0,    1,             // 2 bytes - record type, A
+  0,    1,             // 2 bytes - address class, INET
+  0,    0,    0, 120,  // 4 bytes - TTL
+  0,    4              // 2 bytes - address length
+};
+
+static void mdns_cb(struct mg_connection *c, int ev, void *ev_data) {
+if (ev == MG_EV_READ) {
+  struct mg_dns_rr rr;  // Parse first question, offset 12 is header size
+  size_t n = mg_dns_parse_rr(c->recv.buf, c->recv.len, 12, true, &rr);
+  MG_DEBUG(("MDNS request parsed, result=%d", (int) n));
+  if (n > 0) {
+    char buf[512];
+    char local_name[256];
+    uint32_t ip;
+    struct mg_dns_header *h = (struct mg_dns_header *) buf;
+    struct mg_dns_message dm;
+    mg_dns_parse(c->recv.buf, c->recv.len, &dm);
+    memset(buf, 0, sizeof(buf));  // Clear the whole datagram
+    memset(local_name, 0, sizeof(local_name));
+    mg_snprintf(local_name, sizeof(local_name) - 1, "%s.local", (char *)ev_data);
+    if (strcmp(local_name, dm.name)) {
+      mg_iobuf_del(&c->recv, 0, c->recv.len);
+      return; // Names do not match: drop
+    }
+    h->txnid = ((struct mg_dns_header *) c->recv.buf)->txnid;  // Copy tnxid
+    h->num_questions = mg_htons(1);  // We use only the 1st question
+    h->num_answers = mg_htons(1);    // And only one answer
+    h->flags = mg_htons(0x8400);     // Authoritative response
+    memcpy(buf + sizeof(*h), c->recv.buf + sizeof(*h), n);  // Copy question
+    memcpy(buf + sizeof(*h) + n, mdns_answer, sizeof(mdns_answer));   // And answer
+#if MG_ENABLE_TCPIP
+    ip = c->mgr->ifp->ip;
+#else
+    ip = MG_TCPIP_IP;
+#endif
+    memcpy(buf + sizeof(*h) + n + sizeof(mdns_answer), &ip, 4);
+    mg_send(c, buf, 12 + n + sizeof(mdns_answer) + 4);  // And send it!
+  }
+  mg_iobuf_del(&c->recv, 0, c->recv.len);
+}
+(void) ev_data;
+}
+
+void mg_mcast_add(char *ip, MG_SOCKET_TYPE fd);
+void mg_mdns_listen(struct mg_mgr *mgr, char *name) {
+  struct mg_connection *c = mg_listen(mgr, "udp://224.0.0.251:5353", mdns_cb, name);
+  mg_mcast_add("224.0.0.251", (MG_SOCKET_TYPE) (size_t) c->fd);
+}
+#endif
+
 #ifdef MG_ENABLE_LINES
 #line 1 "src/event.c"
 #endif
@@ -8247,7 +8301,7 @@ long mg_io_send(struct mg_connection *c, const void *buf, size_t len) {
   }
   MG_VERBOSE(("%lu %ld %d", c->id, n, MG_SOCK_ERR(n)));
   if (MG_SOCK_PENDING(n)) return MG_IO_WAIT;
-  if (MG_SOCK_RESET(n)) return MG_IO_RESET; // MbedTLS, see #1507
+  if (MG_SOCK_RESET(n)) return MG_IO_RESET;  // MbedTLS, see #1507
   if (n <= 0) return MG_IO_ERR;
   return n;
 }
@@ -8292,6 +8346,22 @@ static void mg_set_non_blocking_mode(MG_SOCKET_TYPE fd) {
 #else
   fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);  // Non-blocking mode
   fcntl(fd, F_SETFD, FD_CLOEXEC);                          // Set close-on-exec
+#endif
+}
+
+void mg_mcast_add(char *ip, MG_SOCKET_TYPE fd) {
+#if MG_ARCH == MG_ARCH_WIN32 && MG_ENABLE_WINSOCK
+  // TODO(robertc2000)
+#elif MG_ENABLE_RL
+#error UNSUPPORTED
+#elif MG_ENABLE_FREERTOS_TCP
+  // TODO(): prvAllowIPPacketIPv4()
+#else
+  // lwIP, Unix, Zephyr(, AzureRTOS ?)
+  struct ip_mreq mreq;
+  mreq.imr_multiaddr.s_addr = inet_addr(ip);
+  mreq.imr_interface.s_addr = mg_htonl(INADDR_ANY);
+  setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *) &mreq, sizeof(mreq));
 #endif
 }
 
@@ -8369,7 +8439,7 @@ static long recv_raw(struct mg_connection *c, void *buf, size_t len) {
   }
   MG_VERBOSE(("%lu %ld %d", c->id, n, MG_SOCK_ERR(n)));
   if (MG_SOCK_PENDING(n)) return MG_IO_WAIT;
-  if (MG_SOCK_RESET(n)) return MG_IO_RESET; // MbedTLS, see #1507
+  if (MG_SOCK_RESET(n)) return MG_IO_RESET;  // MbedTLS, see #1507
   if (n <= 0) return MG_IO_ERR;
   return n;
 }
@@ -8406,12 +8476,12 @@ static void read_conn(struct mg_connection *c) {
       }
       // there can still be > 16K from last iteration, always mg_tls_recv()
       m = c->is_tls_hs ? (long) MG_IO_WAIT : mg_tls_recv(c, buf, len);
-      if (n == MG_IO_ERR || n == MG_IO_RESET) { // Windows, see #3031
+      if (n == MG_IO_ERR || n == MG_IO_RESET) {  // Windows, see #3031
         if (c->rtls.len == 0 || m < 0) {
           // Close only when we have fully drained both rtls and TLS buffers
           c->is_closing = 1;  // or there's nothing we can do about it.
           m = MG_IO_ERR;
-        } else { // see #2885
+        } else {  // see #2885
           // TLS buffer is capped to max record size, even though, there can
           // be more than one record, give TLS a chance to process them.
         }

@@ -1,5 +1,7 @@
 #pragma once
 
+#if MG_ENABLE_TCPIP
+
 #include "arch.h"
 #include "net.h"
 #include "queue.h"
@@ -98,3 +100,7 @@ struct mg_tcpip_spi {
   void (*end)(void *);              // SPI end: slave select high
   uint8_t (*txn)(void *, uint8_t);  // SPI transaction: write 1 byte, read reply
 };
+
+#define mg_mcast_add(ip, fd)
+
+#endif
