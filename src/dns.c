@@ -100,6 +100,7 @@ bool mg_dns_parse(const uint8_t *buf, size_t len, struct mg_dns_message *dm) {
   const struct mg_dns_header *h = (struct mg_dns_header *) buf;
   struct mg_dns_rr rr;
   size_t i, n, num_answers, ofs = sizeof(*h);
+  bool is_response;
   memset(dm, 0, sizeof(*dm));
 
   if (len < sizeof(*h)) return 0;                // Too small, headers dont fit
@@ -110,12 +111,22 @@ bool mg_dns_parse(const uint8_t *buf, size_t len, struct mg_dns_message *dm) {
     num_answers = 10;  // Sanity cap
   }
   dm->txnid = mg_ntohs(h->txnid);
+  is_response = mg_ntohs(h->flags) & 0x8000;
 
   for (i = 0; i < mg_ntohs(h->num_questions); i++) {
     if ((n = mg_dns_parse_rr(buf, len, ofs, true, &rr)) == 0) return false;
     // MG_INFO(("Q %lu %lu %hu/%hu", ofs, n, rr.atype, rr.aclass));
+    mg_dns_parse_name(buf, len, ofs, dm->name, sizeof(dm->name));
     ofs += n;
   }
+
+  if (!is_response) {
+    // For queries, there is no need to parse the answers. In this way,
+    // we also ensure the domain name (dm->name) is parsed from
+    // the question field.
+    return true;
+  }
+
   for (i = 0; i < num_answers; i++) {
     if ((n = mg_dns_parse_rr(buf, len, ofs, false, &rr)) == 0) return false;
     // MG_INFO(("A -- %lu %lu %hu/%hu %s", ofs, n, rr.atype, rr.aclass,
