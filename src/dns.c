@@ -279,54 +279,67 @@ void mg_resolve(struct mg_connection *c, const char *url) {
 
 #if MG_MDNS
 static const uint8_t mdns_answer[] = {
-  0xc0, 0x0c,          // Point to the name in the DNS question
-  0,    1,             // 2 bytes - record type, A
-  0,    1,             // 2 bytes - address class, INET
-  0,    0,    0, 120,  // 4 bytes - TTL
-  0,    4              // 2 bytes - address length
+    0,    1,             // 2 bytes - record type, A
+    0,    1,             // 2 bytes - address class, INET
+    0,    0,    0, 120,  // 4 bytes - TTL
+    0,    4              // 2 bytes - address length
 };
 
 static void mdns_cb(struct mg_connection *c, int ev, void *ev_data) {
-if (ev == MG_EV_READ) {
-  struct mg_dns_rr rr;  // Parse first question, offset 12 is header size
-  size_t n = mg_dns_parse_rr(c->recv.buf, c->recv.len, 12, true, &rr);
-  MG_DEBUG(("MDNS request parsed, result=%d", (int) n));
-  if (n > 0) {
-    char buf[512];
-    char local_name[256];
-    uint32_t ip;
-    struct mg_dns_header *h = (struct mg_dns_header *) buf;
-    struct mg_dns_message dm;
-    mg_dns_parse(c->recv.buf, c->recv.len, &dm);
-    memset(buf, 0, sizeof(buf));  // Clear the whole datagram
-    memset(local_name, 0, sizeof(local_name));
-    mg_snprintf(local_name, sizeof(local_name) - 1, "%s.local", (char *)ev_data);
-    if (strcmp(local_name, dm.name)) {
-      mg_iobuf_del(&c->recv, 0, c->recv.len);
-      return; // Names do not match: drop
-    }
-    h->txnid = ((struct mg_dns_header *) c->recv.buf)->txnid;  // Copy tnxid
-    h->num_questions = mg_htons(1);  // We use only the 1st question
-    h->num_answers = mg_htons(1);    // And only one answer
-    h->flags = mg_htons(0x8400);     // Authoritative response
-    memcpy(buf + sizeof(*h), c->recv.buf + sizeof(*h), n);  // Copy question
-    memcpy(buf + sizeof(*h) + n, mdns_answer, sizeof(mdns_answer));   // And answer
+  if (ev == MG_EV_READ) {
+    struct mg_dns_header *qh = (struct mg_dns_header *) c->recv.buf;
+    if (c->recv.len > 12 && (qh->flags & mg_htons(0xF800)) == 0) {
+      // flags -> !resp, opcode=0 => query; ignore other opcodes and responses
+      struct mg_dns_rr rr;  // Parse first question, offset 12 is header size
+      size_t n = mg_dns_parse_rr(c->recv.buf, c->recv.len, 12, true, &rr);
+      MG_VERBOSE(("mDNS request parsed, result=%d", (int) n));
+      if (n > 0) {
+        char buf[512];
+        char local_name[256];
+        struct mg_dns_message dm;
+        bool unicast = (rr.aclass & MG_BIT(15)) != 0;  // QU
+        // uint16_t q = mg_ntohs(qh->num_questions);
+        rr.aclass &= ~MG_BIT(15);  // remove "QU" (unicast response requested)
+        qh->num_questions = mg_htons(1);  // parser sanity
+        mg_dns_parse(c->recv.buf, c->recv.len, &dm);
+        memset(local_name, 0, sizeof(local_name));
+        mg_snprintf(local_name, sizeof(local_name) - 1, "%s.local", c->fn_data);
+        if (strcmp(local_name, dm.name) == 0) {
+          struct mg_dns_header *h = (struct mg_dns_header *) buf;
+          uint8_t name_len = (uint8_t) strlen(c->fn_data); 
+          char *p = &buf[sizeof(*h)];
+          memset(buf, 0, sizeof(buf));  // Clear the whole datagram
+          h->txnid = unicast ? qh->txnid : 0; // RFC-6762 18.1
+          // h->num_questions = 0  RFC-6762 6: do not repeat the question
+          h->num_answers = mg_htons(1);    // only one answer
+          h->flags = mg_htons(0x8400);     // Authoritative response
+          *p++ = name_len;  // label 1
+          memcpy(p, c->fn_data, name_len), p += name_len;
+          *p++ = 5; // label 2
+          memcpy(p, "local", 5), p += 5;
+          *p++ = 0; // no more labels
+          memcpy(p, mdns_answer, sizeof(mdns_answer)), p += sizeof(mdns_answer);
 #if MG_ENABLE_TCPIP
-    ip = c->mgr->ifp->ip;
+          memcpy(p, &c->mgr->ifp->ip, 4), p += 4;
 #else
-    ip = MG_TCPIP_IP;
+          memcpy(p, c->data, 4), p += 4;
 #endif
-    memcpy(buf + sizeof(*h) + n + sizeof(mdns_answer), &ip, 4);
-    mg_send(c, buf, 12 + n + sizeof(mdns_answer) + 4);  // And send it!
+          if (!unicast) memcpy(&c->rem, &c->loc, sizeof(c->rem));
+          mg_send(c, buf, p - buf);  // And send it!
+          MG_DEBUG(("mDNS %c response sent", unicast ? 'U' : 'M'));
+        }
+      }
+    }
+    mg_iobuf_del(&c->recv, 0, c->recv.len);
   }
-  mg_iobuf_del(&c->recv, 0, c->recv.len);
-}
-(void) ev_data;
+  (void) ev_data;
 }
 
 void mg_mcast_add(char *ip, MG_SOCKET_TYPE fd);
-void mg_mdns_listen(struct mg_mgr *mgr, char *name) {
-  struct mg_connection *c = mg_listen(mgr, "udp://224.0.0.251:5353", mdns_cb, name);
-  mg_mcast_add("224.0.0.251", (MG_SOCKET_TYPE) (size_t) c->fd);
+struct mg_connection *mg_mdns_listen(struct mg_mgr *mgr, char *name) {
+  struct mg_connection *c =
+      mg_listen(mgr, "udp://224.0.0.251:5353", mdns_cb, name);
+  if (c != NULL) mg_mcast_add("224.0.0.251", (MG_SOCKET_TYPE) (size_t) c->fd);
+  return c;
 }
 #endif
