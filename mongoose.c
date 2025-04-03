@@ -22238,6 +22238,12 @@ static bool mg_tcpip_driver_rw612_init(struct mg_tcpip_if *ifp) {
   ENET->PALR =
       ifp->mac[0] << 24 | ifp->mac[1] << 16 | ifp->mac[2] << 8 | ifp->mac[3];
   ENET->PAUR |= (ifp->mac[4] << 24 | ifp->mac[5] << 16);
+  if (MG_TCPIP_MCAST) {
+    // enable multicast address 01:00:5e:00:00:fb (bit 33 -> bit 1 of GAUR)
+    ENET->GALR = 0;
+    ENET->GAUR = MG_BIT(1);
+  }
+
   ENET->MSCR = ((d->mdc_cr & 0x3f) << 1) | ((d->mdc_holdtime & 7) << 8);
   ENET->EIMR = MG_BIT(25);             // Enable RX interrupt
   ENET->ECR |= MG_BIT(8) | MG_BIT(1);  // DBSWP, Enable
@@ -22691,7 +22697,7 @@ static bool mg_tcpip_driver_stm32f_init(struct mg_tcpip_if *ifp) {
   // MG_BIT(25);
   ETH->MACIMR = MG_BIT(3) | MG_BIT(9);  // Mask timestamp & PMT IT
   ETH->MACFCR = MG_BIT(7);              // Disable zero quarta pause
-  // ETH->MACFFR = MG_BIT(31);                            // Receive all
+  ETH->MACFFR = MG_BIT(10);                            // Perfect filtering
   struct mg_phy phy = {eth_read_phy, eth_write_phy};
   mg_phy_init(&phy, phy_addr, MG_PHY_CLOCKS_MAC);
   ETH->DMARDLAR = (uint32_t) (uintptr_t) s_rxdesc;  // RX descriptors
@@ -22707,6 +22713,18 @@ static bool mg_tcpip_driver_stm32f_init(struct mg_tcpip_if *ifp) {
   ETH->MACA0LR = (uint32_t) (ifp->mac[3] << 24) |
                  ((uint32_t) ifp->mac[2] << 16) |
                  ((uint32_t) ifp->mac[1] << 8) | ifp->mac[0];
+  if (MG_TCPIP_MCAST) {
+    // enable multicast
+    uint8_t multicast_addr[6] = {0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb};
+    ETH->MACA1LR = (uint32_t)multicast_addr[3] << 24 |
+                  (uint32_t)multicast_addr[2] << 16 |
+                  (uint32_t)multicast_addr[1] << 8  |
+                  (uint32_t)multicast_addr[0];
+
+    ETH->MACA1HR = (uint32_t)multicast_addr[5] << 8 | \
+                                      (uint32_t)multicast_addr[4];
+    ETH->MACA1HR |= MG_BIT(31); // SA
+  }
   return true;
 }
 
@@ -23386,10 +23404,6 @@ static bool mg_tcpip_driver_tms570_init(struct mg_tcpip_if *ifp) {
   while (delay-- != 0) (void) 0;
   struct mg_phy phy = {emac_read_phy, emac_write_phy};
   mg_phy_init(&phy, d->phy_addr, MG_PHY_CLOCKS_MAC);
-  // set the mac address
-  EMAC->MACSRCADDRHI = ifp->mac[0] | (ifp->mac[1] << 8) | (ifp->mac[2] << 16) |
-                       (ifp->mac[3] << 24);
-  EMAC->MACSRCADDRLO = ifp->mac[4] | (ifp->mac[5] << 8);
   uint32_t channel;
   for (channel = 0; channel < 8; channel++) {
     EMAC->MACINDEX = channel;
@@ -23399,8 +23413,17 @@ static bool mg_tcpip_driver_tms570_init(struct mg_tcpip_if *ifp) {
                       MG_BIT(19) | (channel << 16);
   }
   EMAC->RXUNICASTSET = 1; // accept unicast frames;
-  EMAC->RXMBPENABLE = MG_BIT(30) | MG_BIT(13); // CRC, broadcast;
-  
+
+  if (MG_TCPIP_MCAST) {
+    // Setting Hash Index for 01:00:5e:00:00:fb (multicast)
+    // using TMS570 XOR method (32.5.37).
+    // computed hash is 55, which means bit 23 (55 - 32) in
+    // HASH2 register must be set
+    EMAC->MACHASH2 = MG_BIT(23);
+    EMAC->RXMBPENABLE = MG_BIT(5); // enable hash filtering
+  }
+  EMAC->RXMBPENABLE |= MG_BIT(30) | MG_BIT(13); // CRC, broadcast
+
   // Initialize the descriptors
   for (i = 0; i < ETH_DESC_CNT; i++) {
     if (i < ETH_DESC_CNT - 1) {
@@ -23825,8 +23848,17 @@ static bool mg_tcpip_driver_xmc_init(struct mg_tcpip_if *ifp) {
   ETH0->MAC_ADDRESS0_LOW = 
         MG_U32(ifp->mac[3], ifp->mac[2], ifp->mac[1], ifp->mac[0]);
 
+  if (MG_TCPIP_MCAST) {
+    // set the multicast address filter
+    uint8_t multicast_addr[6] = {0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb};
+    ETH0->MAC_ADDRESS1_HIGH = MG_U32(0, 0, multicast_addr[5],
+        multicast_addr[4]) | MG_BIT(31);
+    ETH0->MAC_ADDRESS1_LOW = MG_U32(multicast_addr[3], multicast_addr[2],
+        multicast_addr[1], multicast_addr[0]);
+  }
+
   // Configure the receive filter
-  ETH0->MAC_FRAME_FILTER = MG_BIT(10) | MG_BIT(2); // HFP, HMC
+  ETH0->MAC_FRAME_FILTER = MG_BIT(10); // Perfect filter
   // Disable flow control
   ETH0->FLOW_CONTROL = 0;
   // Enable store and forward mode
@@ -24062,8 +24094,7 @@ static bool mg_tcpip_driver_xmc7_init(struct mg_tcpip_if *ifp) {
   // set NSP change, ignore RX FCS, data bus width, clock rate
   // frame length 1536, full duplex, speed
   ETH0->NETWORK_CONFIG = MG_BIT(29) | MG_BIT(26) | MG_BIT(21) |
-                         ((cr & 7) << 18) | MG_BIT(8) | MG_BIT(4) | MG_BIT(1) |
-                         MG_BIT(0);
+                         ((cr & 7) << 18) | MG_BIT(8) | MG_BIT(1) | MG_BIT(0);
 
   // config DMA settings: Force TX burst, Discard on Error, set RX buffer size
   // to 1536, TX_PBUF_SIZE, RX_PBUF_SIZE, AMBA_BURST_LENGTH
@@ -24099,6 +24130,14 @@ static bool mg_tcpip_driver_xmc7_init(struct mg_tcpip_if *ifp) {
   ETH0->SPEC_ADD1_BOTTOM =
       ifp->mac[3] << 24 | ifp->mac[2] << 16 | ifp->mac[1] << 8 | ifp->mac[0];
   ETH0->SPEC_ADD1_TOP = ifp->mac[5] << 8 | ifp->mac[4];
+
+  if (MG_TCPIP_MCAST) {
+    // set multicast MAC address
+    uint8_t multicast_addr[6] = {0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb};
+    ETH0->SPEC_ADD2_BOTTOM = multicast_addr[3] << 24 | multicast_addr[2] << 16 |
+                            multicast_addr[1] << 8 | multicast_addr[0];
+    ETH0->SPEC_ADD2_TOP = multicast_addr[5] << 8 | multicast_addr[4];
+  }
 
   // enable MDIO, TX, RX
   ETH0->NETWORK_CONTROL = MG_BIT(4) | MG_BIT(3) | MG_BIT(2);

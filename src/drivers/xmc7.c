@@ -104,8 +104,7 @@ static bool mg_tcpip_driver_xmc7_init(struct mg_tcpip_if *ifp) {
   // set NSP change, ignore RX FCS, data bus width, clock rate
   // frame length 1536, full duplex, speed
   ETH0->NETWORK_CONFIG = MG_BIT(29) | MG_BIT(26) | MG_BIT(21) |
-                         ((cr & 7) << 18) | MG_BIT(8) | MG_BIT(4) | MG_BIT(1) |
-                         MG_BIT(0);
+                         ((cr & 7) << 18) | MG_BIT(8) | MG_BIT(1) | MG_BIT(0);
 
   // config DMA settings: Force TX burst, Discard on Error, set RX buffer size
   // to 1536, TX_PBUF_SIZE, RX_PBUF_SIZE, AMBA_BURST_LENGTH
@@ -141,6 +140,14 @@ static bool mg_tcpip_driver_xmc7_init(struct mg_tcpip_if *ifp) {
   ETH0->SPEC_ADD1_BOTTOM =
       ifp->mac[3] << 24 | ifp->mac[2] << 16 | ifp->mac[1] << 8 | ifp->mac[0];
   ETH0->SPEC_ADD1_TOP = ifp->mac[5] << 8 | ifp->mac[4];
+
+  if (MG_TCPIP_MCAST) {
+    // set multicast MAC address
+    uint8_t multicast_addr[6] = {0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb};
+    ETH0->SPEC_ADD2_BOTTOM = multicast_addr[3] << 24 | multicast_addr[2] << 16 |
+                            multicast_addr[1] << 8 | multicast_addr[0];
+    ETH0->SPEC_ADD2_TOP = multicast_addr[5] << 8 | multicast_addr[4];
+  }
 
   // enable MDIO, TX, RX
   ETH0->NETWORK_CONTROL = MG_BIT(4) | MG_BIT(3) | MG_BIT(2);
