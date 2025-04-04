@@ -303,8 +303,8 @@ static void mdns_cb(struct mg_connection *c, int ev, void *ev_data) {
         struct mg_dns_message dm;
         bool unicast = (rr.aclass & MG_BIT(15)) != 0;  // QU
         // uint16_t q = mg_ntohs(qh->num_questions);
-        rr.aclass &= ~MG_BIT(15);  // remove "QU" (unicast response requested)
-        qh->num_questions = mg_htons(1);  // parser sanity
+        rr.aclass &= (uint16_t) ~MG_BIT(15);  // remove "QU" (unicast response)
+        qh->num_questions = mg_htons(1);      // parser sanity
         mg_dns_parse(c->recv.buf, c->recv.len, &dm);
         if (name_len > (sizeof(local_name) - 7))  // leave room for .local\0
           name_len = sizeof(local_name) - 7;
@@ -312,12 +312,12 @@ static void mdns_cb(struct mg_connection *c, int ev, void *ev_data) {
         strcpy(local_name + name_len, ".local");  // ensure proper name.local\0
         if (strcmp(local_name, dm.name) == 0) {
           char *p = &buf[sizeof(*h)];
-          memset(h, 0, sizeof(*h)); // clear header
+          memset(h, 0, sizeof(*h));            // clear header
           h->txnid = unicast ? qh->txnid : 0;  // RFC-6762 18.1
           // RFC-6762 6: 0 questions, 1 Answer, 0 Auth, 0 Additional RRs
-          h->num_answers = mg_htons(1);        // only one answer
-          h->flags = mg_htons(0x8400);         // Authoritative response
-          *p++ = name_len;                     // label 1
+          h->num_answers = mg_htons(1);  // only one answer
+          h->flags = mg_htons(0x8400);   // Authoritative response
+          *p++ = name_len;               // label 1
           memcpy(p, c->fn_data, name_len), p += name_len;
           *p++ = 5;  // label 2
           memcpy(p, "local", 5), p += 5;

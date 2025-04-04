@@ -424,8 +424,8 @@ static void mdns_cb(struct mg_connection *c, int ev, void *ev_data) {
         struct mg_dns_message dm;
         bool unicast = (rr.aclass & MG_BIT(15)) != 0;  // QU
         // uint16_t q = mg_ntohs(qh->num_questions);
-        rr.aclass &= ~MG_BIT(15);  // remove "QU" (unicast response requested)
-        qh->num_questions = mg_htons(1);  // parser sanity
+        rr.aclass &= (uint16_t) ~MG_BIT(15);  // remove "QU" (unicast response)
+        qh->num_questions = mg_htons(1);      // parser sanity
         mg_dns_parse(c->recv.buf, c->recv.len, &dm);
         if (name_len > (sizeof(local_name) - 7))  // leave room for .local\0
           name_len = sizeof(local_name) - 7;
@@ -433,12 +433,12 @@ static void mdns_cb(struct mg_connection *c, int ev, void *ev_data) {
         strcpy(local_name + name_len, ".local");  // ensure proper name.local\0
         if (strcmp(local_name, dm.name) == 0) {
           char *p = &buf[sizeof(*h)];
-          memset(h, 0, sizeof(*h)); // clear header
+          memset(h, 0, sizeof(*h));            // clear header
           h->txnid = unicast ? qh->txnid : 0;  // RFC-6762 18.1
           // RFC-6762 6: 0 questions, 1 Answer, 0 Auth, 0 Additional RRs
-          h->num_answers = mg_htons(1);        // only one answer
-          h->flags = mg_htons(0x8400);         // Authoritative response
-          *p++ = name_len;                     // label 1
+          h->num_answers = mg_htons(1);  // only one answer
+          h->flags = mg_htons(0x8400);   // Authoritative response
+          *p++ = name_len;               // label 1
           memcpy(p, c->fn_data, name_len), p += name_len;
           *p++ = 5;  // label 2
           memcpy(p, "local", 5), p += 5;
@@ -23238,7 +23238,7 @@ static bool mg_tcpip_driver_tm4c_init(struct mg_tcpip_if *ifp) {
   // EMAC->EMACDMABUSMOD = MG_BIT(13) | MG_BIT(16) | MG_BIT(22) | MG_BIT(23) | MG_BIT(25);
   EMAC->EMACIM = MG_BIT(3) | MG_BIT(9);  // Mask timestamp & PMT IT
   EMAC->EMACFLOWCTL = MG_BIT(7);      // Disable zero-quanta pause
-  // EMAC->EMACFRAMEFLTR = MG_BIT(31);   // Receive all
+  EMAC->EMACFRAMEFLTR = MG_BIT(10);   // Perfect filtering
   // EMAC->EMACPC defaults to internal PHY (EPHY) in MMI mode
   emac_write_phy(EPHY_ADDR, EPHYBMCR, MG_BIT(15));  // Reset internal PHY (EPHY)
   emac_write_phy(EPHY_ADDR, EPHYBMCR, MG_BIT(12));  // Set autonegotiation
@@ -23252,8 +23252,15 @@ static bool mg_tcpip_driver_tm4c_init(struct mg_tcpip_if *ifp) {
   EMAC->EMACADDR0L = (uint32_t) (ifp->mac[3] << 24) |
                      ((uint32_t) ifp->mac[2] << 16) |
                      ((uint32_t) ifp->mac[1] << 8) | ifp->mac[0];
-  // NOTE(scaprile) There are 3 additional slots for filtering, disabled by
-  // default. This also applies to the STM32 driver (at least for F7)
+#if MG_TCPIP_MCAST
+  // add mDNS / DNS-SD multicast address
+  uint8_t mcast_addr[6] = {0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb};
+  EMAC->EMACADDR1L = (uint32_t) mcast_addr[3] << 24 |
+                     (uint32_t) mcast_addr[2] << 16 |
+                     (uint32_t) mcast_addr[1] << 8 | (uint32_t) mcast_addr[0];
+  EMAC->EMACADDR1H = (uint32_t) mcast_addr[5] << 8 | (uint32_t) mcast_addr[4];
+  EMAC->EMACADDR1H |= MG_BIT(31);  // AE
+#endif
   return true;
 }
 
