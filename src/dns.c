@@ -279,10 +279,10 @@ void mg_resolve(struct mg_connection *c, const char *url) {
 
 #if MG_MDNS
 static const uint8_t mdns_answer[] = {
-    0,    1,             // 2 bytes - record type, A
-    0,    1,             // 2 bytes - address class, INET
-    0,    0,    0, 120,  // 4 bytes - TTL
-    0,    4              // 2 bytes - address length
+    0, 1,          // 2 bytes - record type, A
+    0, 1,          // 2 bytes - address class, INET
+    0, 0, 0, 120,  // 4 bytes - TTL
+    0, 4           // 2 bytes - address length
 };
 
 static void mdns_cb(struct mg_connection *c, int ev, void *ev_data) {
@@ -294,30 +294,34 @@ static void mdns_cb(struct mg_connection *c, int ev, void *ev_data) {
       size_t n = mg_dns_parse_rr(c->recv.buf, c->recv.len, 12, true, &rr);
       MG_VERBOSE(("mDNS request parsed, result=%d", (int) n));
       if (n > 0) {
-        char buf[512];
-        char local_name[256];
+        // RFC-6762 Appendix C, RFC2181 11: m(n + 1-63), max 255 + 0x0
+        // buf and h declared here to ease future expansion to DNS-SD
+        char buf[sizeof(struct mg_dns_header) + 256 + sizeof(mdns_answer) + 4];
+        struct mg_dns_header *h = (struct mg_dns_header *) buf;
+        char local_name[63 + 7];  // name label + '.' + local label + '\0'
+        uint8_t name_len = (uint8_t) strlen(c->fn_data);
         struct mg_dns_message dm;
         bool unicast = (rr.aclass & MG_BIT(15)) != 0;  // QU
         // uint16_t q = mg_ntohs(qh->num_questions);
         rr.aclass &= ~MG_BIT(15);  // remove "QU" (unicast response requested)
         qh->num_questions = mg_htons(1);  // parser sanity
         mg_dns_parse(c->recv.buf, c->recv.len, &dm);
-        memset(local_name, 0, sizeof(local_name));
-        mg_snprintf(local_name, sizeof(local_name) - 1, "%s.local", c->fn_data);
+        if (name_len > (sizeof(local_name) - 7))  // leave room for .local\0
+          name_len = sizeof(local_name) - 7;
+        memcpy(local_name, c->fn_data, name_len);
+        strcpy(local_name + name_len, ".local");  // ensure proper name.local\0
         if (strcmp(local_name, dm.name) == 0) {
-          struct mg_dns_header *h = (struct mg_dns_header *) buf;
-          uint8_t name_len = (uint8_t) strlen(c->fn_data); 
           char *p = &buf[sizeof(*h)];
-          memset(buf, 0, sizeof(buf));  // Clear the whole datagram
-          h->txnid = unicast ? qh->txnid : 0; // RFC-6762 18.1
-          // h->num_questions = 0  RFC-6762 6: do not repeat the question
-          h->num_answers = mg_htons(1);    // only one answer
-          h->flags = mg_htons(0x8400);     // Authoritative response
-          *p++ = name_len;  // label 1
+          memset(h, 0, sizeof(*h)); // clear header
+          h->txnid = unicast ? qh->txnid : 0;  // RFC-6762 18.1
+          // RFC-6762 6: 0 questions, 1 Answer, 0 Auth, 0 Additional RRs
+          h->num_answers = mg_htons(1);        // only one answer
+          h->flags = mg_htons(0x8400);         // Authoritative response
+          *p++ = name_len;                     // label 1
           memcpy(p, c->fn_data, name_len), p += name_len;
-          *p++ = 5; // label 2
+          *p++ = 5;  // label 2
           memcpy(p, "local", 5), p += 5;
-          *p++ = 0; // no more labels
+          *p++ = 0;  // no more labels
           memcpy(p, mdns_answer, sizeof(mdns_answer)), p += sizeof(mdns_answer);
 #if MG_ENABLE_TCPIP
           memcpy(p, &c->mgr->ifp->ip, 4), p += 4;
