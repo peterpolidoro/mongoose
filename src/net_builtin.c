@@ -1124,6 +1124,10 @@ void mg_connect_resolved(struct mg_connection *c) {
 
 bool mg_open_listener(struct mg_connection *c, const char *url) {
   c->loc.port = mg_htons(mg_url_port(url));
+  if (!mg_aton(mg_url_host(url), &c->loc)) {
+    MG_ERROR(("invalid listening URL: %s", url));
+    return false;
+  }
   return true;
 }
 
@@ -1211,4 +1215,7 @@ bool mg_send(struct mg_connection *c, const void *buf, size_t len) {
   }
   return res;
 }
+
+void mg_mcast_add(char *ip, MG_SOCKET_TYPE fd) { (void) ip; (void) fd; }
+
 #endif  // MG_ENABLE_TCPIP

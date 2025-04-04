@@ -398,7 +398,7 @@ void mg_resolve(struct mg_connection *c, const char *url) {
   }
 }
 
-#if MG_MDNS
+#if MG_ENABLE_MDNS
 static const uint8_t mdns_answer[] = {
     0, 1,          // 2 bytes - record type, A
     0, 1,          // 2 bytes - address class, INET
@@ -5287,6 +5287,10 @@ void mg_connect_resolved(struct mg_connection *c) {
 
 bool mg_open_listener(struct mg_connection *c, const char *url) {
   c->loc.port = mg_htons(mg_url_port(url));
+  if (!mg_aton(mg_url_host(url), &c->loc)) {
+    MG_ERROR(("invalid listening URL: %s", url));
+    return false;
+  }
   return true;
 }
 
@@ -5374,6 +5378,9 @@ bool mg_send(struct mg_connection *c, const void *buf, size_t len) {
   }
   return res;
 }
+
+void mg_mcast_add(char *ip, MG_SOCKET_TYPE fd) { (void) ip; (void) fd; }
+
 #endif  // MG_ENABLE_TCPIP
 
 #ifdef MG_ENABLE_LINES
@@ -22712,7 +22719,7 @@ static bool mg_tcpip_driver_stm32f_init(struct mg_tcpip_if *ifp) {
   // MG_BIT(25);
   ETH->MACIMR = MG_BIT(3) | MG_BIT(9);  // Mask timestamp & PMT IT
   ETH->MACFCR = MG_BIT(7);              // Disable zero quarta pause
-  ETH->MACFFR = MG_BIT(10);                            // Perfect filtering
+  ETH->MACFFR = MG_BIT(10);             // Perfect filtering
   struct mg_phy phy = {eth_read_phy, eth_write_phy};
   mg_phy_init(&phy, phy_addr, MG_PHY_CLOCKS_MAC);
   ETH->DMARDLAR = (uint32_t) (uintptr_t) s_rxdesc;  // RX descriptors
@@ -22728,18 +22735,16 @@ static bool mg_tcpip_driver_stm32f_init(struct mg_tcpip_if *ifp) {
   ETH->MACA0LR = (uint32_t) (ifp->mac[3] << 24) |
                  ((uint32_t) ifp->mac[2] << 16) |
                  ((uint32_t) ifp->mac[1] << 8) | ifp->mac[0];
-  if (MG_TCPIP_MCAST) {
-    // enable multicast
-    uint8_t multicast_addr[6] = {0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb};
-    ETH->MACA1LR = (uint32_t)multicast_addr[3] << 24 |
-                  (uint32_t)multicast_addr[2] << 16 |
-                  (uint32_t)multicast_addr[1] << 8  |
-                  (uint32_t)multicast_addr[0];
-
-    ETH->MACA1HR = (uint32_t)multicast_addr[5] << 8 | \
-                                      (uint32_t)multicast_addr[4];
-    ETH->MACA1HR |= MG_BIT(31); // SA
-  }
+#if MG_TCPIP_MCAST
+  // enable multicast
+  uint8_t multicast_addr[6] = {0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb};
+  ETH->MACA1LR =
+      (uint32_t) multicast_addr[3] << 24 | (uint32_t) multicast_addr[2] << 16 |
+      (uint32_t) multicast_addr[1] << 8 | (uint32_t) multicast_addr[0];
+  ETH->MACA1HR =
+      (uint32_t) multicast_addr[5] << 8 | (uint32_t) multicast_addr[4];
+  ETH->MACA1HR |= MG_BIT(31);  // AE
+#endif
   return true;
 }
 
@@ -22828,7 +22833,7 @@ struct mg_tcpip_driver mg_tcpip_driver_stm32f = {
 
 #if MG_ENABLE_TCPIP && (MG_ENABLE_DRIVER_STM32H || MG_ENABLE_DRIVER_MCXN)
 // STM32H: vendor modded single-queue Synopsys v4.2
-// MCXNx4x: dual-queue Synopsys v5.2
+// MCXNx4x: dual-queue Synopsys v5.2 with no hash table option
 // RT1170 ENET_QOS: quad-queue Synopsys v5.1
 struct synopsys_enet_qos {
   volatile uint32_t MACCR, MACECR, MACPFR, MACWTR, MACHT0R, MACHT1R,
@@ -22928,7 +22933,9 @@ static bool mg_tcpip_driver_stm32h_init(struct mg_tcpip_if *ifp) {
   ETH->DMASBMR |= MG_BIT(12);  // AAL NOTE(scaprile): is this actually needed
   ETH->MACIER = 0;  // Do not enable additional irq sources (reset value)
   ETH->MACTFCR = MG_BIT(7);  // Disable zero-quanta pause
-  // ETH->MACPFR = MG_BIT(31);  // Receive all
+#if !MG_ENABLE_DRIVER_MCXN
+  ETH->MACPFR = MG_BIT(10);  // Perfect filtering
+#endif
   struct mg_phy phy = {eth_read_phy, eth_write_phy};
   mg_phy_init(&phy, phy_addr, phy_conf);
   ETH->DMACRDLAR =
@@ -22966,6 +22973,19 @@ static bool mg_tcpip_driver_stm32h_init(struct mg_tcpip_if *ifp) {
   ETH->MACA0LR = (uint32_t) (ifp->mac[3] << 24) |
                  ((uint32_t) ifp->mac[2] << 16) |
                  ((uint32_t) ifp->mac[1] << 8) | ifp->mac[0];
+#if MG_TCPIP_MCAST
+#if MG_ENABLE_DRIVER_MCXN
+  ETH->MACPFR = MG_BIT(4);  // Pass Multicast (pass all multicast frames)
+#else
+  // add mDNS / DNS-SD multicast address
+  uint8_t mcast_addr[6] = {0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb};
+  ETH->MACA1LR = (uint32_t) mcast_addr[3] << 24 |
+                 (uint32_t) mcast_addr[2] << 16 |
+                 (uint32_t) mcast_addr[1] << 8 | (uint32_t) mcast_addr[0];
+  ETH->MACA1HR = (uint32_t) mcast_addr[5] << 8 | (uint32_t) mcast_addr[4];
+  ETH->MACA1HR |= MG_BIT(31);  // AE
+#endif
+#endif
   return true;
 }
 

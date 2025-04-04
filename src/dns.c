@@ -277,7 +277,7 @@ void mg_resolve(struct mg_connection *c, const char *url) {
   }
 }
 
-#if MG_MDNS
+#if MG_ENABLE_MDNS
 static const uint8_t mdns_answer[] = {
     0, 1,          // 2 bytes - record type, A
     0, 1,          // 2 bytes - address class, INET
