@@ -177,14 +177,12 @@ static void mg_set_non_blocking_mode(MG_SOCKET_TYPE fd) {
 }
 
 void mg_mcast_add(char *ip, MG_SOCKET_TYPE fd) {
-#if MG_ARCH == MG_ARCH_WIN32 && MG_ENABLE_WINSOCK
-  // TODO(robertc2000)
-#elif MG_ENABLE_RL
+#if MG_ENABLE_RL
 #error UNSUPPORTED
 #elif MG_ENABLE_FREERTOS_TCP
   // TODO(): prvAllowIPPacketIPv4()
 #else
-  // lwIP, Unix, Zephyr(, AzureRTOS ?)
+  // lwIP, Unix, Windows, Zephyr(, AzureRTOS ?)
   struct ip_mreq mreq;
   mreq.imr_multiaddr.s_addr = inet_addr(ip);
   mreq.imr_interface.s_addr = mg_htonl(INADDR_ANY);
