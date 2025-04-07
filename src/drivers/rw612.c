@@ -89,11 +89,11 @@ static bool mg_tcpip_driver_rw612_init(struct mg_tcpip_if *ifp) {
   ENET->PALR =
       ifp->mac[0] << 24 | ifp->mac[1] << 16 | ifp->mac[2] << 8 | ifp->mac[3];
   ENET->PAUR |= (ifp->mac[4] << 24 | ifp->mac[5] << 16);
-  if (MG_TCPIP_MCAST) {
+#if MG_TCPIP_MCAST
     // enable multicast address 01:00:5e:00:00:fb (bit 33 -> bit 1 of GAUR)
     ENET->GALR = 0;
     ENET->GAUR = MG_BIT(1);
-  }
+#endif
 
   ENET->MSCR = ((d->mdc_cr & 0x3f) << 1) | ((d->mdc_holdtime & 7) << 8);
   ENET->EIMR = MG_BIT(25);             // Enable RX interrupt

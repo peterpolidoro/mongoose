@@ -115,14 +115,14 @@ static bool mg_tcpip_driver_tms570_init(struct mg_tcpip_if *ifp) {
   }
   EMAC->RXUNICASTSET = 1; // accept unicast frames;
 
-  if (MG_TCPIP_MCAST) {
+#if MG_TCPIP_MCAST
     // Setting Hash Index for 01:00:5e:00:00:fb (multicast)
     // using TMS570 XOR method (32.5.37).
     // computed hash is 55, which means bit 23 (55 - 32) in
     // HASH2 register must be set
     EMAC->MACHASH2 = MG_BIT(23);
     EMAC->RXMBPENABLE = MG_BIT(5); // enable hash filtering
-  }
+#endif
   EMAC->RXMBPENABLE |= MG_BIT(30) | MG_BIT(13); // CRC, broadcast
 
   // Initialize the descriptors

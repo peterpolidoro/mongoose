@@ -101,14 +101,14 @@ static bool mg_tcpip_driver_xmc_init(struct mg_tcpip_if *ifp) {
   ETH0->MAC_ADDRESS0_LOW = 
         MG_U32(ifp->mac[3], ifp->mac[2], ifp->mac[1], ifp->mac[0]);
 
-  if (MG_TCPIP_MCAST) {
+#if MG_TCPIP_MCAST
     // set the multicast address filter
     uint8_t multicast_addr[6] = {0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb};
     ETH0->MAC_ADDRESS1_HIGH = MG_U32(0, 0, multicast_addr[5],
         multicast_addr[4]) | MG_BIT(31);
     ETH0->MAC_ADDRESS1_LOW = MG_U32(multicast_addr[3], multicast_addr[2],
         multicast_addr[1], multicast_addr[0]);
-  }
+#endif
 
   // Configure the receive filter
   ETH0->MAC_FRAME_FILTER = MG_BIT(10); // Perfect filter

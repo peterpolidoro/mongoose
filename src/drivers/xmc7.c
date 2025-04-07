@@ -141,13 +141,13 @@ static bool mg_tcpip_driver_xmc7_init(struct mg_tcpip_if *ifp) {
       ifp->mac[3] << 24 | ifp->mac[2] << 16 | ifp->mac[1] << 8 | ifp->mac[0];
   ETH0->SPEC_ADD1_TOP = ifp->mac[5] << 8 | ifp->mac[4];
 
-  if (MG_TCPIP_MCAST) {
+#if MG_TCPIP_MCAST
     // set multicast MAC address
     uint8_t multicast_addr[6] = {0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb};
-    ETH0->SPEC_ADD2_BOTTOM = multicast_addr[3] << 24 | multicast_addr[2] << 16 |
-                            multicast_addr[1] << 8 | multicast_addr[0];
+    ETH0->SPEC_ADD2_BOTTOM = multicast_addr[3] << 24 |
+      multicast_addr[2] << 16 | multicast_addr[1] << 8 | multicast_addr[0];
     ETH0->SPEC_ADD2_TOP = multicast_addr[5] << 8 | multicast_addr[4];
-  }
+#endif
 
   // enable MDIO, TX, RX
   ETH0->NETWORK_CONTROL = MG_BIT(4) | MG_BIT(3) | MG_BIT(2);
